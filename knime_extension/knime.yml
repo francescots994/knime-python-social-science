@@ -1,0 +1,23 @@
+name: knime-python-social-science  # Will be concatenated with the group_id to an ID
+author: Francesco Tuscolano & Daniele Tonini & *add your names here*
+extension_module: src/social_science_ext # The .py Python module containing the nodes of your extension
+description: Social Science Nodes for KNIME # Human readable bundle name / description
+long_description: This repository is built for KNIME - Social Science Extension, with the goal of making Python-based nodes, allowing researchers and analysts to integrate advanced statistical methods
+group_id: uni.bocconi
+version: 1.0.0 # Version of this Python node extension
+vendor: Bocconi University, Milan, Italy
+license_file: LICENSE.TXT # Best practice: put your LICENSE.TXT next to the knime.yml; otherwise you would need to change to path/to/LICENSE.txt
+bundled_env_name: org_knime_pythonscripting # we re-use the bundled Python environment
+feature_dependencies:
+  - org.knime.features.python3.scripting 5.3.0
+
+#env_yml_path: bundling_ymls/environment_main.yml # this file is needed to create the dedicated conda environment upon installation in KNIME
+
+#the packages sometimes have different versions for each OS, following keys, point to the respective environment.yml files containing specific version of packages, this may not be applicable for all extensions but not necessary!
+
+#env_yml_path: env.yml
+#  Optional: define any KNIME related feature dependency here.
+# feature_dependencies: 
+#   - org.knime.features.python3.scripting 5.3.0
+#   - org.knime.knip.feature
+#   - org.knime.features.core 5.1.1 #ensure that this extension can only be used with 5.1.1 which includes dialog rules

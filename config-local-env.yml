@@ -1,0 +1,4 @@
+uni.bocconi.knime-python-social-science: # {group_id}.{name} from the knime.yml
+  src: C:\Users\Francesco Tuscolano\Desktop\Social Science - Git\knime-social-science\knime_extension # Local path to folder containing the extension files
+  conda_env_path:  C:\Users\Francesco Tuscolano\.conda\envs\pythonknime # Path to the local installed Python environment to use
+  debug_mode: true # Optional line, if set to true, it will always use the latest changes of execute/configure, when that method is used within the KNIME Analytics Platform
