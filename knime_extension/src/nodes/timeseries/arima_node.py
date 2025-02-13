@@ -11,7 +11,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 @knext.node(
-    name="ARIMA Learner (Labs)",
+    name="ARIMA Learner",
     node_type=knext.NodeType.LEARNER,
     icon_path="icons/models/SARIMA_Forecaster.png",
     category=kutil.category_timeseries,
