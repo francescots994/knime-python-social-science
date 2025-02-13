@@ -1,11 +1,10 @@
-# Time Series Analysis Extension for KNIME
+# Statistics and Social Science Extension for KNIME
 
-[![Jenkins](https://jenkins.knime.com/buildStatus/icon?job=knime-timeseries-analysis%2Fmaster)](https://jenkins.knime.com/job/knime-timeseries-analysis/job/master/)
+This repository contains the code for the Statistics and Social Science Extension for the KNIME Analytics Platform. This extension provides nodes for advanced statistical analysis, time series modeling, and data visualizations, enabling users to perform in-depth explorations of structured data.
 
-This repository contains code of the Time Series Analysis extension for [KNIME Analytics Platform](https://www.knime.com/knime-analytics-platform "KNIME"). This extension provides nodes for time series modeling, analysis, and processing.
+The extension is curated and maintained by Francesco Tuscolano (KNIME), Prof. Daniele Tonini, and Pietro Marra (Bocconi University, Milan).
 
-This extension is maintained by Ali Asghar Marvi & Corey Weisinger from the evangelism team at [KNIME](https://www.knime.com/ "KNIME") and by the [KNIME Team Rakete](mailto:team-rakete@knime.com).
-The project's goal is to utilize the bundled Python packages shipped with KNIME, harness its functionalities, and incorporate it within native KNIME nodes for Time Series Analysis. 
+The project's goal is to integrate advanced statistical methodologies within KNIME by leveraging bundled Python packages and transforming them into native KNIME nodes.
 
 This extension is based on [Pandas](https://pandas.pydata.org/ "Pandas") DateTime functionality and [Statsmodels](https://www.statsmodels.org/stable/index.html "Statsmodels") library. The supported data types for timestamps are defined in the [KNIME-Core](https://github.com/knime/knime-core/tree/master/org.knime.core/src/eclipse/org/knime/core/data/date "KNIME Date Types").
 
