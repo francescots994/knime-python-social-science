@@ -62,7 +62,13 @@ class _LearnerParams:
         min_value=2,
     )
 
-    natural_log = knext.BoolParameter(
+    dynamic_check = knext.BoolParameter(
+        label="Generate in-samples dynamically",
+        description="Check this box to use in-sample prediction as lagged values. Otherwise use true values.",
+        default_value=False,
+    )
+
+    natural_log_learner = knext.BoolParameter(
         label="Log-transform data for modeling",
         description="Optionally log your target column before model fitting and exponentiate the forecast before output. This may help reduce variance in the training data.",
         default_value=False,
@@ -110,8 +116,14 @@ class _PredictorParams:
     )
 
     dynamic_check = knext.BoolParameter(
-        label="Generate in-samples dynamically",
+        label="Generate out-of-sample forecasts dynamically",
         description="Check this box to use in-sample prediction as lagged values. Otherwise use true values.",
+        default_value=False,
+    )
+
+    natural_log_predictor = knext.BoolParameter(
+        label="Reverse Log",
+        description="Check this box if you applied the log transform inside the SARIMA Forecaster node while training your model. It will reverse the transform before generating forecasts.",
         default_value=False,
     )
 
