@@ -9,6 +9,6 @@ category = knext.category(
 )
 
 from nodes.timeseries import (
-    arima_node,  # noqa: F401
-    arima_node_apply
+    arima_learner,  # noqa: F401
+    arima_predictor
     )
