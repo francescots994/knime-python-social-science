@@ -2,3 +2,4 @@ __pycache__/
 config_ali.yml
 config-local-env.yml
 config.yml
+.gitignore
