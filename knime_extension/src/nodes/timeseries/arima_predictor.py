@@ -1,6 +1,7 @@
 import logging
-import knime.extension as knext
+import knime_extension as knext
 from util import utils as kutil
+
 # from ..configs.models.arima import SarimaPredictorParams
 import numpy as np
 import pandas as pd
@@ -37,7 +38,6 @@ class SarimaForcaster:
     Based on a trained SARIMA model given at the model input port of this node, the forecasts values are computed.
     """
 
-
     number_of_forecasts = knext.IntParameter(
         label="Forecast",
         description="Forecasts of the given time series *h* period ahead of the training data.",
@@ -62,14 +62,12 @@ class SarimaForcaster:
         column_filter=kutil.is_numeric,
     )
 
-
     def configure(
-            self,
-            configure_context: knext.ConfigurationContext,
-            input_schema: knext.Schema,
-            input_model
-        ):
-        
+        self,
+        configure_context: knext.ConfigurationContext,
+        input_schema: knext.Schema,
+        input_model,
+    ):
         # Checks that the given column is not None and exists in the given schema. If none is selected it returns the
         # first column that is compatible with the provided function. If none is compatible it throws an exception.
         self.input_column = kutil.column_exists_or_preset(
@@ -80,10 +78,7 @@ class SarimaForcaster:
         )
 
         # dynamic predictions on log transformed column can generate invalid output
-        if (
-            self.natural_log
-            and self.dynamic_check
-        ):
+        if self.natural_log and self.dynamic_check:
             configure_context.set_warning(
                 "Enabling dynamic predictions on log transformed target column can generate invalid output."
             )
@@ -95,19 +90,11 @@ class SarimaForcaster:
 
         forecast_schema = knext.Column(knext.double(), "Forecasts")
 
-        return (
-            forecast_schema
-        )
-
-
-
+        return forecast_schema
 
     def execute(
-            self, 
-            exec_context: knext.ExecutionContext,
-            data_input: knext.Table,
-            input_model):
-
+        self, exec_context: knext.ExecutionContext, data_input: knext.Table, input_model
+    ):
         df: pd.DataFrame
         df = data_input.to_pandas()
         target_col: pd.Series
@@ -131,22 +118,17 @@ class SarimaForcaster:
         new_trained_model = trained_model.apply(target_col)
 
         exec_context.set_progress(0.8)
-        
+
         # make out-of-sample forecasts
-        forecasts = new_trained_model.forecast(
-            steps=self.number_of_forecasts
-            ).to_frame(name="Forecasts")
+        forecasts = new_trained_model.forecast(steps=self.number_of_forecasts).to_frame(
+            name="Forecasts"
+        )
 
         # reverse log transformation for forecasts
         if self.natural_log:
             forecasts = np.exp(forecasts)
 
         return knext.Table.from_pandas(forecasts)
-
-
-
-
-
 
     def get_coeffs_and_stats(self, model):
         # estimates of the parameter coefficients
