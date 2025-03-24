@@ -2,9 +2,10 @@ from .parent import _LearnerParams, _PredictorParams
 import knime.extension as knext
 from util import utils as kutil
 
-'''
+"""
 This file serves to initialize the parameters for both sarima nodes (learner and predictor)
-'''
+"""
+
 
 @knext.parameter_group(label="LMAO")
 class SLearnerParams(_LearnerParams):
@@ -15,10 +16,12 @@ class SLearnerParams(_LearnerParams):
     The learner attributes are put together in the parameter group called "Sarima Model Parameters".
 
     """
-    # this initializes the parameters from the parent class _LearnerParams 
+
+    # this initializes the parameters from the parent class _LearnerParams
     # once the child class SLearnerParams is instantiated
     def __init__(self):
         super().__init__()
+
 
 @knext.parameter_group(label="Sarima Learner Parameters")
 class SarimaLearnerParams:
@@ -37,7 +40,6 @@ class SarimaLearnerParams:
         port_index=0,
         column_filter=kutil.is_numeric,
     )
-
 
 
 @knext.parameter_group(label="LMAO")
@@ -72,6 +74,9 @@ class SarimaPredictorParams:
         column_filter=kutil.is_numeric,
     )
 
+
+def ciao():
+    return
 
 
 # @knext.parameter_group(label="Settings")

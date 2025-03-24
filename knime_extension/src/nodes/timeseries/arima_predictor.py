@@ -1,7 +1,8 @@
 import logging
-import knime.extension as knext
+import knime_extension as knext
 from util import utils as kutil
-from ..configs.models.arima import SarimaPredictorParams
+
+# from ..configs.models.arima import SarimaPredictorParams
 import numpy as np
 import pandas as pd
 import pickle
@@ -17,7 +18,6 @@ LOGGER = logging.getLogger(__name__)
     id="arima_predictor",
 )
 # Added the input port for the time series to use to generate forecasts
-# TODO everything else
 @knext.input_table(
     name="Input Data",
     description="Table containing data to generate forecast with the trained SARIMA model, must contain a numeric target column with no missing values to be used for forecasting.",
@@ -38,54 +38,70 @@ class SarimaForcaster:
     Based on a trained SARIMA model given at the model input port of this node, the forecasts values are computed.
     """
 
-    sarima_params = SarimaPredictorParams()
+    number_of_forecasts = knext.IntParameter(
+        label="Forecast",
+        description="Forecasts of the given time series *h* period ahead of the training data.",
+        default_value=1,
+        min_value=1,
+    )
+    dynamic_check = knext.BoolParameter(
+        label="Generate out-of-sample forecasts dynamically",
+        description="Check this box to use in-sample prediction as lagged values. Otherwise use true values.",
+        default_value=False,
+    )
+    natural_log = knext.BoolParameter(
+        label="Reverse Log",
+        description="Check this box if you applied the log transform inside the SARIMA Forecaster node while training your model. It will reverse the transform before generating forecasts.",
+        default_value=False,
+    )
+    # target column for modelling
+    input_column = knext.ColumnParameter(
+        label="Target Column",
+        description="Table containing training data for fitting the SARIMA model, must contain a numeric target column with no missing values to be used for forecasting.",
+        port_index=0,
+        column_filter=kutil.is_numeric,
+    )
 
     def configure(
-            self,
-            configure_context: knext.ConfigurationContext,
-            input_schema: knext.Schema,  # NOSONAR input_schema is necessary
-        ):
-
+        self,
+        configure_context: knext.ConfigurationContext,
+        input_schema: knext.Schema,
+        input_model,
+    ):
         # Checks that the given column is not None and exists in the given schema. If none is selected it returns the
         # first column that is compatible with the provided function. If none is compatible it throws an exception.
-        self.sarima_params.input_column = kutil.column_exists_or_preset(
+        self.input_column = kutil.column_exists_or_preset(
             configure_context,
-            self.sarima_params.input_column,
+            self.input_column,
             input_schema,
             kutil.is_numeric,
         )
 
         # dynamic predictions on log transformed column can generate invalid output
-        if (
-            self.sarima_params.predictor_params.natural_log_predictor
-            and self.sarima_params.predictor_params.dynamic_check
-        ):
+        if self.natural_log and self.dynamic_check:
             configure_context.set_warning(
                 "Enabling dynamic predictions on log transformed target column can generate invalid output."
             )
 
-    # def configure(self, configure_context, input_schema):
-
-    #     if self.natural_log and self.dynamic_check:
-    #         configure_context.set_warning(
-    #             "Enabling dynamic predictions with log transformation can create invalid predictions."
-    #         )
+        if self.number_of_forecasts < 1:
+            configure_context.set_warning(
+                "At least one forecast should be made by the model."
+            )
 
         forecast_schema = knext.Column(knext.double(), "Forecasts")
+
         return forecast_schema
 
-
-
-
-    def execute(self, exec_context: knext.ExecutionContext, model_input, data_input: knext.Table):
-    
+    def execute(
+        self, exec_context: knext.ExecutionContext, data_input: knext.Table, input_model
+    ):
         df: pd.DataFrame
         df = data_input.to_pandas()
         target_col: pd.Series
-        target_col = df[self.sarima_params.input_column]
+        target_col = df[self.input_column]
 
         # check if log transformation is enabled
-        if self.sarima_params.predictor_params.natural_log_predictor:
+        if self.natural_log:
             num_negative_vals = kutil.count_negative_values(target_col)
 
             if num_negative_vals > 0:
@@ -95,24 +111,53 @@ class SarimaForcaster:
             target_col = np.log(target_col)
         exec_context.set_progress(0.1)
 
-        # TODO understand how to call the two inputs
-
-        trained_model = pickle.loads(model_input)
+        trained_model = pickle.loads(input_model)
         exec_context.set_progress(0.4)
 
-        # make out-of-sample forecasts
-        # forecasts = trained_model.forecast(steps=self.sarima_params.predictor_params.number_of_forecasts).to_frame(
-        #     name="Forecasts"
-        # )
-        
-        # instead, use the method .apply to generate forecasts using the same model but with new data
-
-
+        # use the method .apply to generate forecasts using the same model but with new data
+        new_trained_model = trained_model.apply(target_col)
 
         exec_context.set_progress(0.8)
 
+        # make out-of-sample forecasts
+        forecasts = new_trained_model.forecast(steps=self.number_of_forecasts).to_frame(
+            name="Forecasts"
+        )
+
         # reverse log transformation for forecasts
-        if self.sarima_params.predictor_params.natural_log_predictor:
+        if self.natural_log:
             forecasts = np.exp(forecasts)
 
         return knext.Table.from_pandas(forecasts)
+
+    def get_coeffs_and_stats(self, model):
+        # estimates of the parameter coefficients
+        coeff = model.params.to_frame()
+
+        # calculate standard deviation of the parameters in the coefficients
+        coeff_errors = model.bse.to_frame().reset_index()
+        coeff_errors["index"] = coeff_errors["index"].apply(lambda x: x + " Std. Err")
+        coeff_errors = coeff_errors.set_index("index")
+
+        # extract log likelihood of the trained model
+        log_likelihood = pd.DataFrame(
+            data=model.llf, index=["Log Likelihood"], columns=[0]
+        )
+
+        # extract AIC (Akaike Information Criterion)
+        aic = pd.DataFrame(data=model.aic, index=["AIC"], columns=[0])
+
+        # extract BIC (Bayesian Information Criterion)
+        bic = pd.DataFrame(data=model.bic, index=["BIC"], columns=[0])
+
+        # extract Mean Squared Error
+        mse = pd.DataFrame(data=model.mse, index=["MSE"], columns=[0])
+
+        # extract Mean Absolute error
+        mae = pd.DataFrame(data=model.mae, index=["MAE"], columns=[0])
+
+        summary = pd.concat(
+            [coeff, coeff_errors, log_likelihood, aic, bic, mse, mae]
+        ).rename(columns={0: "Value"})
+
+        return summary
