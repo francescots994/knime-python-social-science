@@ -10,11 +10,11 @@ LOGGER = logging.getLogger(__name__)
 
 
 @knext.node(
-    name="ARIMA Predictor",
+    name="Auto SARIMA Predictor",
     node_type=knext.NodeType.PREDICTOR,
     icon_path="icons/models/SARIMA_Forecaster-Apply.png",
     category=kutil.category_timeseries,
-    id="arima_predictor",
+    id="auto_sarima_predictor",
 )
 # Added the input port for the time series to use to generate forecasts
 @knext.input_table(
@@ -24,7 +24,7 @@ LOGGER = logging.getLogger(__name__)
 @knext.input_binary(
     name="Model Input",
     description="Trained SARIMA model",
-    id="sarima.model",
+    id="auto_sarima.model",
 )
 @knext.output_table(
     name="Forecast",
