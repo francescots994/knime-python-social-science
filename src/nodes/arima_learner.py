@@ -232,7 +232,7 @@ class SarimaLearner:
 
         # combine the two dfs
         in_samps_and_residuals = pd.concat([in_samples, residuals], axis=1)
-        in_samps_and_residuals.columns = ["In Sample Predictions", "Residuals"]
+        in_samps_and_residuals.columns = ["In-Sample Predictions", "Residuals"]
 
         # populate model coefficients
         coeffs_and_stats = self.get_coeffs_and_stats(trained_model, best_params)

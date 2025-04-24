@@ -8,7 +8,4 @@ category = knext.category(
     icon="icons/Time_Series_Analysis.png",
 )
 
-from nodes.timeseries import (
-    arima_learner,  # noqa: F401
-    arima_predictor
-    )
+from nodes import arima_learner, arima_predictor  # noqa: F401
