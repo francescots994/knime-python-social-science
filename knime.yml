@@ -1,12 +1,12 @@
 name: knime-python-social-science  # Will be concatenated with the group_id to an ID
-author: Francesco Tuscolano & Daniele Tonini & *add your names here*
+author: Francesco Tuscolano & Daniele Tonini & Pietro Maran
 extension_module: src/social_science_ext # The .py Python module containing the nodes of your extension
 description: Social Science Nodes for KNIME # Human readable bundle name / description
-long_description: This repository is built for KNIME - Social Science Extension, with the goal of making Python-based nodes, allowing researchers and analysts to integrate advanced statistical methods
+long_description: This repository is built for KNIME - Social Science Extension, with the goal of making Python-based nodes, allowing researchers and analysts to integrate advanced statistical methods.
 group_id: uni.bocconi
 version: 1.0.0 # Version of this Python node extension
 vendor: Bocconi University, Milan, Italy
 license_file: LICENSE.TXT # Best practice: put your LICENSE.TXT next to the knime.yml; otherwise you would need to change to path/to/LICENSE.txt
-bundled_env_name: org_knime_pythonscripting # we re-use the bundled Python environment
+bundled_env_name: org_knime_pythonscripting_5.4.3 # we re-use the bundled Python environment
 feature_dependencies:
   - org.knime.features.python3.scripting 5.4.3
