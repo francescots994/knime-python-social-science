@@ -1,141 +1,191 @@
 import logging
 import knime.extension as knext
 from util import utils as kutil
-from ..configs.models.arima import SarimaLearnerParams
 import pandas as pd
 import numpy as np
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 import pickle
+from copy import deepcopy
+from statsmodels.tsa.stattools import kpss
+import random
+import warnings
+from statsmodels.tools.sm_exceptions import ConvergenceWarning # Import specific warning type if known
+import time
+
 
 LOGGER = logging.getLogger(__name__)
 
 
-# The two types of models the user can choose between
-class ArimaModelOptions(knext.EnumParameterOptions):
-    MANUAL = (
-        "manual-arima",
-        "Specify the SARIMA model parameters manually.")
+@knext.parameter_group("Non Seasonal Parameters")
+class non_seasonal_params:
+    """Non-seasonal parameters constraints for the SARIMA model."""
 
-    AUTO = (
-        "auto-arima",
-        "Automatically determine the SARIMA model parameters with constraints."
-        )
+    max_ar = knext.IntParameter(
+        label="Max AR Order (p)",
+        description="The maximum number of lagged observations to enforce in the optimization.",
+        default_value=8,
+        min_value=0,
+    )
+    max_i = knext.IntParameter(
+        label="Max I Order (d)",
+        description="The maximum number of times to apply differencing to enforce in the optimization.",
+        default_value=5,
+        min_value=0,
+    )
+    max_ma = knext.IntParameter(
+        label="Max MA Order (q)",
+        description="The maximum number of lagged forecast errors to enforce in the optimization.",
+        default_value=8,
+        min_value=0,
+    )
+
+
+@knext.parameter_group("Seasonal Parameters")
+class seasonal_params:
+    """Seasonal parameters constraints for the SARIMA model."""
+
+    max_s_ar = knext.IntParameter(
+        label="Max Seasonal AR Order (P)",
+        description="The maximum number of seasonally lagged observations to enforce in the optimization.",
+        default_value=5,
+        min_value=0,
+    )
+    max_s_i = knext.IntParameter(
+        label="Max Seasonal I Order (D)",
+        description="The maximum number of times to apply seasonal differencing to enforce in the optimization.",
+        default_value=5,
+        min_value=0,
+    )
+    max_s_ma = knext.IntParameter(
+        label="Max Seasonal MA Order (Q)",
+        description="The maximum number of seasonal lagged forecast errors to enforce in the optimization.",
+        default_value=5,
+        min_value=0,
+    )
+
+
 
 
 @knext.node(
-    name="ARIMA Learner",
+    name="Auto SARIMA Learner",
     node_type=knext.NodeType.LEARNER,
     icon_path="icons/models/SARIMA_Forecaster.png",
     category=kutil.category_timeseries,
-    id="arima_learner",
+    id="auto_sarima_learner",
 )
 @knext.input_table(
     name="Input Data",
-    description="Table containing training data for fitting the SARIMA model, must contain a numeric target column with no missing values to be used for forecasting.",
-)
-# Remove the output table for the forecast
-# @knext.output_table(
-#     name="Forecast",
-#     description="Table containing forecasts for the configured column, the first value will be 1 timestamp ahead of the final training value used.",
-# )
-# Instead, add the output tables for the in-sample predictions
-@knext.output_table(
-    name="In-sample Predictions",
-    description="In sample model prediction values for the configured column.",
+    description="Table containing training data for fitting the SARIMA model, must contain a numeric target column with no missing values.",
 )
 @knext.output_table(
-    name="Residuals",
-    description="In sample model prediction values and residuals (the difference between observed value and the predicted output).",
+    name="In-sample Predictions and Residuals",
+    description="In sample model prediction values for the configured column and the residuals (the difference between observed value and the predicted output).",
 )
 @knext.output_table(
     name="Coefficients and Statistics",
-    description="Table containing fitted model coefficients, variance of residuals (sigma2), and several model metrics along with their standard errors.",
+    description="Table containing optimal parameters, fitted model coefficients, variance of residuals, and several model metrics along with their standard errors.",
 )
 @knext.output_binary(
     name="Model",
-    description="Pickled model object that can be used by the SARIMA (Apply) node to generate different forecast lengths without refitting the model",
-    id="sarima.model",
+    description="Pickled model object that can be used by the Auto SARIMA predictor node to generate different forecast lengths without refitting the model",
+    id="auto_sarima.model",
 )
 class SarimaLearner:
     """
-    Trains and generates a forecast with a (S)ARIMA Model
-
-    Trains and generates a forecast using a Seasonal AutoRegressive Integrated Moving Average (SARIMA) model. The SARIMA models captures temporal structures in time series data in the following components:
+    Trains and generates a forecast using a (Seasonal) AutoRegressive Integrated Moving Average (S)ARIMA model. The SARIMA models captures temporal structures in time series data in the following components:
 
     - **AR (AutoRegressive):** Relationship between the current observation and a number (p) of lagged observations.
     - **I (Integrated):** Degree (d) of differencing required to make the time series stationary.
     - **MA (Moving Average):** Time series mean and the relationship between the current forecast error and a number (q) of lagged forecast errors.
 
     *Seasonal versions of these components operate similarly, with lag intervals equal to the seasonal period (S).*
+
+    The model is trained using the SARIMAX class from the statsmodels library. The node uses a simulated annealing algorithm to optimize the hyperparameters of the SARIMA model, namely the non-seasonal and seasonal parameters.
+
+    If the user sets the seasonal parameters to zero, including the seasonality parameter itself, the model will behave like a standard ARIMA model.
+    
+    The node also supports dynamic in-sample predictions, which can be used to generate lagged values for the model. Additionally, the node allows for log transformation of the target column before model fitting and exponentiation of the forecast before output, which can help reduce variance in the training data.
     """
 
-    # Select the ARIMA model parametrization method through a toggle switch
-    arima_model = knext.EnumParameter(
-        "ARIMA parametrization method",
-        "Choose between specifying the ARIMA model parameters manually or automatically determining the ARIMA model parameters with constraints.",
-        ArimaModelOptions.MANUAL.name,
-        ArimaModelOptions,
-        style=knext.EnumParameter.Style.VALUE_SWITCH,
+    # General settings for the SARIMA model
+    input_column = knext.ColumnParameter(
+        label="Target Column",
+        description="Table containing training data for fitting the SARIMA model, must contain a numeric target column with no missing values to be used for forecasting.",
+        port_index=0,
+        column_filter=kutil.is_numeric,
+    )
+    seasonal_period_param = knext.IntParameter(
+        label="Seasonal Period (s)",
+        description="Specify the length of the Seasonal Period. Set =0 for non-seasonal ARIMA model.",
+        default_value=2,
+        min_value=0,
+    )
+    dynamic_check = knext.BoolParameter(
+        label="Generate in-samples dynamically",
+        description="Check this box to use in-sample prediction as lagged values. Otherwise use true values.",
+        default_value=False,
+    )
+    natural_log = knext.BoolParameter(
+        label="Log-transform data for modeling",
+        description="Optionally log your target column before model fitting and exponentiate the forecast before output. This may help reduce variance in the training data.",
+        default_value=False,
     )
 
+    # The parameters constraints for the automatic ARIMA model
+    non_seasonal_params = non_seasonal_params()
+    seasonal_params = seasonal_params()
+    max_ar = non_seasonal_params.max_ar
+    max_i = non_seasonal_params.max_i
+    max_ma = non_seasonal_params.max_ma
+    max_s_ar = seasonal_params.max_s_ar
+    max_s_i = seasonal_params.max_s_i
+    max_s_ma = seasonal_params.max_s_ma
 
-    # TODO: make sure the parameters (somehow) have the option to get displayed only when the user selects the manual option
-    # use this code appended to the creation of a parameter: 
-    # .rule(
-    #     knext.OneOf(arima_model, [ArimaModelOptions.MANUAL.name]),
-    #     knext.Effect.SHOW,
-    # )
 
-
-    sarima_params = SarimaLearnerParams()
-
-    # merge in-samples and residuals (In-Samples & Residuals)
-    def configure(
-            self, 
-            configure_context, 
-            input_schema
-        ):
+    def configure(self, configure_context, input_schema):
         
-        # Checks that the given column is not None and exists in the given schema. If none is selected it returns the
-        # first column that is compatible with the provided function. If none is compatible it throws an exception.
-        self.sarima_params.input_column = kutil.column_exists_or_preset(
+        # Checks that the given column is not None and exists in the given schema. If none is selected it returns the first column that is compatible with the provided function. If none is compatible it throws an exception.
+        self.input_column = kutil.column_exists_or_preset(
             configure_context,
-            self.sarima_params.input_column,
+            self.input_column,
             input_schema,
             kutil.is_numeric,
         )
 
         # dynamic predictions on log transformed column can generate invalid output
         if (
-            self.sarima_params.learner_params.natural_log_learner
-            and self.sarima_params.learner_params.dynamic_check
+            self.natural_log
+            and self.dynamic_check
         ):
             configure_context.set_warning(
                 "Enabling dynamic predictions on log transformed target column can generate invalid output."
             )
 
-        # forecast_schema = knext.Column(knext.double(), "Forecasts")
-        insamp_res_schema = knext.Schema(
-            [knext.double(), knext.double()], ["Residuals", "In-Samples"]
-        )
+        insamp_res_schema = knext.Schema([knext.double(), knext.double()], ["In-Samples", "Residuals"])
         model_summary_schema = knext.Column(knext.double(), "Value")
-        binary_model_schema = knext.BinaryPortObjectSpec("sarima.model")
+        binary_model_schema = knext.BinaryPortObjectSpec("auto_sarima.model")
 
         return (
-            # forecast_schema,
             insamp_res_schema,
             model_summary_schema,
             binary_model_schema,
         )
 
-    def execute(self, exec_context: knext.ExecutionContext, input: knext.Table):
+    def execute(
+            self,
+            exec_context: knext.ExecutionContext,
+            input: knext.Table
+        ):
+        # Record start time
+        start_time = time.perf_counter()
+        
         df: pd.DataFrame
         df = input.to_pandas()
         target_col: pd.Series
-        target_col = df[self.sarima_params.input_column]
+        target_col = df[self.input_column]
 
         # check if log transformation is enabled
-        if self.sarima_params.learner_params.natural_log_learner:
+        if self.natural_log:
             num_negative_vals = kutil.count_negative_values(target_col)
 
             if num_negative_vals > 0:
@@ -145,95 +195,96 @@ class SarimaLearner:
             target_col = np.log(target_col)
 
         exec_context.set_progress(0.1)
-        self.__validate(target_col)
-        exec_context.set_progress(0.3)
+        self.__validate_col(target_col) # check for missing values
+        exec_context.set_progress(0.2)
 
-        # model initialization and training
-        model = SARIMAX(
-            target_col,
-            order=(
-                self.sarima_params.learner_params.ar_order_param,
-                self.sarima_params.learner_params.i_order_param,
-                self.sarima_params.learner_params.ma_order_param,
-            ),
-            seasonal_order=(
-                self.sarima_params.learner_params.seasoanal_ar_order_param,
-                self.sarima_params.learner_params.seasoanal_i_order_param,
-                self.sarima_params.learner_params.seasoanal_ma_order_param,
-                self.sarima_params.learner_params.seasonal_period_param,
-            ),
-        )
-        exec_context.set_progress(0.5)
-        trained_model = model.fit()
+        params_constraints = (self.max_ar, self.max_i, self.max_ma, self.max_s_ar, self.max_s_i, self.max_s_ma)
+        best_params = self.params_optimization_loop(target_col, 
+                                self.seasonal_period_param, 
+                                params_constraints, 
+                                exec_context = exec_context,
+                                step_size=1, 
+                                anneal_steps=5, 
+                                mcmc_steps=10, 
+                                beta0=0.1,
+                                beta1=10.0,
+                                seed=None)
         exec_context.set_progress(0.8)
+        
+        trained_model = self.evaluate_arima_model(
+            target_col, 
+            best_params, 
+            self.seasonal_period_param,
+            exec_context = exec_context
+        )[1]
+        exec_context.set_progress(0.9)
 
         # produce in-sample predictions for the whole series and put it in a Pandas Series
-        in_samples = pd.Series(dtype=np.float64)
-        preds_col = trained_model.predict(
-            start=1, dynamic=self.sarima_params.learner_params.dynamic_check
-        )
-        in_samples = pd.concat([in_samples, preds_col])
-
+        in_samples_series = trained_model.predict(start=1, dynamic=self.dynamic_check)
+        in_samples = pd.DataFrame(in_samples_series)
         # reverse log transformation for in-sample values
-        if self.sarima_params.learner_params.natural_log_learner:
+        if self.natural_log:
             in_samples = np.exp(in_samples)
 
-        # combine residuals and in-samples
-        residuals = trained_model.resid
-        in_samps_and_residuals = pd.concat([residuals, in_samples], axis=1)
-        in_samps_and_residuals.columns = ["Residuals", "In-Samples"]
+        # produce residuals for the whole series based on the predictions just made and put it in a Pandas Series
+        residuals_series = trained_model.resid[1:]
+        residuals = pd.DataFrame(residuals_series)
 
-        # make out-of-sample forecasts
-        # forecasts = trained_model.forecast(
-        #     steps=self.sarima_params.predictor_params.number_of_forecasts
-        # ).to_frame(name="Forecasts")
-
-        # reverse log transformation for forecasts
-        # if self.sarima_params.learner_params.natural_log_learner:
-        #     forecasts = np.exp(forecasts)
+        # combine the two dfs
+        in_samps_and_residuals = pd.concat([in_samples, residuals], axis=1)
+        in_samps_and_residuals.columns = ["In Sample Predictions", "Residuals"]
 
         # populate model coefficients
-        coeffs_and_stats = self.get_coeffs_and_stats(trained_model)
+        coeffs_and_stats = self.get_coeffs_and_stats(trained_model, best_params)
 
         model_binary = pickle.dumps(trained_model)
 
-        exec_context.set_progress(0.9)
+        exec_context.set_progress(0.99)
+
+        # Record end time
+        end_time = time.perf_counter()
+        exec_context.set_warning(
+            f"Model training completed in {end_time - start_time:.2f} seconds."
+        )
+
         return (
-            # knext.Table.from_pandas(forecasts),
-            knext.Table.from_pandas(in_samps_and_residuals),
-            knext.Table.from_pandas(coeffs_and_stats),
+            knext.Table.from_pandas(in_samps_and_residuals, row_ids = "keep"),
+            knext.Table.from_pandas(coeffs_and_stats, row_ids = "keep"),
             model_binary,
         )
 
-    def __validate(self, column):
+    def __validate_col(self, column):
         if kutil.check_missing_values(column):
             missing_count = kutil.count_missing_values(column)
             raise knext.InvalidParametersError(
                 f"""There are "{missing_count}" number of missing values in the target column."""
             )
 
+    def __validate_params(self, column, p, q, P, Q):
         # validate that enough values are being provided to train the SARIMA model
+        S = self.seasonal_period_param
         set_val = set(
-            [
-                # p
-                self.sarima_params.learner_params.ar_order_param,
-                # q
-                self.sarima_params.learner_params.ma_order_param,
-                # S * P
-                self.sarima_params.learner_params.seasonal_period_param
-                * self.sarima_params.learner_params.seasoanal_ar_order_param,
-                # S*Q
-                self.sarima_params.learner_params.seasonal_period_param
-                * self.sarima_params.learner_params.seasoanal_ma_order_param,
-            ]
+            [p, q, 
+             S * P, 
+             S * Q]
         )
         num_of_rows = kutil.number_of_rows(column)
         if num_of_rows < max(set_val):
-            raise knext.InvalidParametersError(
-                f"Number of rows must be greater than maximum lag: '{max(set_val)}' to train the model. The maximum lag is the max of p, q, s*P, and s*Q."
-            )
+            # raise knext.InvalidParametersError(
+            #     f"Number of rows must be greater than maximum lag: '{max(set_val)}' to train the model. The maximum lag is the max of p, q, s*P, and s*Q."
+            return False
 
-    def get_coeffs_and_stats(self, model):
+        # handle Q > 0 and q >= s
+        if ((P > 0) and (p >= S) or
+            #"Autoregressive terms overlap with seasonal autogressive terms, p should be less than S when using seasonal auto regressive terms"
+            (Q > 0) and (q >= S)):
+            #"Moving average terms overlap with seasonal moving average terms, q should be less than S when using seasonal moving average terms."
+            return False
+
+        return True
+
+
+    def get_coeffs_and_stats(self, model, best_params):
         # estimates of the parameter coefficients
         coeff = model.params.to_frame()
 
@@ -259,49 +310,220 @@ class SarimaLearner:
         # extract Mean Absolute error
         mae = pd.DataFrame(data=model.mae, index=["MAE"], columns=[0])
 
+        p = pd.DataFrame(data=best_params['p'], index=["Best p parameter"], columns=[0])
+        d = pd.DataFrame(data=best_params['d'], index=["Best d parameter"], columns=[0])
+        q = pd.DataFrame(data=best_params['q'], index=["Best q parameter"], columns=[0])
+        P = pd.DataFrame(data=best_params['P'], index=["Best P parameter"], columns=[0])
+        D = pd.DataFrame(data=best_params['D'], index=["Best D parameter"], columns=[0])
+        Q = pd.DataFrame(data=best_params['Q'], index=["Best Q parameter"], columns=[0])
+
+        # concatenate all metrics and parameters
         summary = pd.concat(
-            [coeff, coeff_errors, log_likelihood, aic, bic, mse, mae]
+            [coeff, coeff_errors, log_likelihood, aic, bic, mse, mae, p, d, q, P, D, Q]
         ).rename(columns={0: "Value"})
 
         return summary
+        
+        
+    def find_optimal_integration_params(self, series, seasonality, max_i=5, max_is=5, alpha=0.05):
+        """
+        Perform the KPSS test to check for stationarity in a time series.
+
+        Parameters:
+        - series: Pandas Series (Time Series Data)
+        - seasonality: Seasonal period (integer)
+        - max_i: Maximum iterations for d parameter
+        - max_is: Maximum iterations for D parameter
+        - alpha: Significance level (default=0.05)
+
+        Returns:
+        - Tuple (d parameter, D parameter)
+        """
+        # Initialize d and D parameters
+        d = 0
+        D = 0
+
+        # Check for seasonal stationarity (D parameter)
+        for _ in range(max_is):
+            p_value_ds = kpss(series, regression="c", nlags="auto")[1]
+            if p_value_ds >= alpha:
+                break
+            # Apply seasonal differencing
+            series = deepcopy(series.diff(seasonality).dropna())
+            D += 1
+
+        # Check for trend stationarity (d parameter)
+        for _ in range(max_i):
+            p_value_d = kpss(series, regression="c", nlags="auto")[1]
+            if p_value_d >= alpha:
+                break
+            # Apply trend differencing
+            series = deepcopy(series.diff().dropna())
+            d += 1
+
+        return d, D
+
+    def propose_initial_params(self, d, D, max_p=8, max_q=8, max_ps=5, max_qs=5):
+
+        p = min([max_p, 1])
+        q = min([max_q, 1])
+        P = min([max_ps, 1])
+        Q = min([max_qs, 1])
+
+        return {'p': p, 'd': d, 'q': q, 'P': P, 'D': D, 'Q': Q}
+
+    def propose_new_params(self, series, current_params, max_p=8, max_q=8, max_ps=5, max_qs=5, step_size=1):
+        """
+        Proposes new random SARIMA hyperparameter(s) based on the current one with a small random step.
+        """
+
+        updated_params = deepcopy(current_params)
+        threshold = np.random.rand()
+
+        if threshold <= (1/2): # update trend parameters (p, q)
+
+            current_p, current_q = updated_params['p'], updated_params['q']
+
+            new_p, new_q = current_p + (np.random.choice([-1, 1]) * step_size), current_q + (np.random.choice([-1, 1]) * step_size)
+
+            new_p = max(min(max_p, new_p), 0)
+            new_q = max(min(max_q, new_q), 0)
+
+            updated_params['p'], updated_params['q'] = new_p, new_q
+
+        elif threshold > (1/2) and max_ps != 0 and max_qs != 0: # update seasonal parameters (P, Q) only if they are not zero (seasonal model)
+
+            current_ps, current_qs = updated_params['P'], updated_params['Q']
+
+            new_ps, new_qs = current_ps + (np.random.choice([-1, 1]) * step_size), current_qs + (np.random.choice([-1, 1]) * step_size)
+
+            new_ps = max(min(max_ps, new_ps), 0)
+            new_qs = max(min(max_qs, new_qs), 0)
+
+            updated_params['P'], updated_params['Q'] = new_ps, new_qs
+
+        if self.__validate_params(series, updated_params['p'], updated_params['q'], updated_params['P'], updated_params['Q']):
+            return updated_params
+        else:
+            return current_params
 
 
 
+    def evaluate_arima_model(self, series, params, seasonality, exec_context: knext.ExecutionContext):
+        """
+        Fits an ARIMA model and returns the AIC value as a score,
+        also checks for specific warnings.
+        """
+        aic_score = np.inf
+        convergence_warning_occurred = False
 
+        try:
+            # Use catch_warnings to capture any warnings during fit()
+            with warnings.catch_warnings(record=True) as caught_warnings:
+                warnings.simplefilter("always")  # Ensure all warnings are caught
 
+                model = SARIMAX(
+                    endog=series,
+                    order=(params['p'], params['d'], params['q']),
+                    seasonal_order=(params['P'], params['D'], params['Q'], seasonality)
+                )
+                model_fit = model.fit(disp=False)
+                aic_score = model_fit.aic
 
+                # Check if any ConvergenceWarning was caught
+                for warning in caught_warnings:
+                    if issubclass(warning.category, ConvergenceWarning):
+                        convergence_warning_occurred = True
+                        break 
 
+        except Exception as e:
+            # Handle potential errors during model fitting (e.g., invalid parameters)
+            exec_context.set_warning(f"WARNING Error fitting SARIMAX with params {params}: {e}")
+            return (np.inf, model_fit) # Treat errors as convergence issues or high cost
 
-#  query_mode = knext.EnumParameter(
-#         "Query mode",
-#         "You can choose from **pre-built** queries or create a **custom** one from scratch.",
-#         QueryBuilderMode.PREBUILT.name,
-#         QueryBuilderMode,
-#         style=knext.EnumParameter.Style.VALUE_SWITCH,
-#     )
+        if convergence_warning_occurred:
+            exec_context.set_warning(f"ConvergenceWarning occurred for params {params}. Handling it...")
+            # return infinity to make impossible to accept these parameters
+            exec_context.set_warning(f"Model fitting failed for params {params}, returning infinity.")
+            return (np.inf, model_fit)
 
-#     query_custom = knext.MultilineStringParameter(
-#         label="Custom query:",
-#         description="Input your query below, replacing the default query.",
-#         default_value="""SELECT
-#             campaign.id,
-#             campaign.name,
-#             metrics.impressions,
-#             metrics.clicks,
-#             metrics.cost_micros
-#         FROM campaign""",
-#         number_of_lines=10,
-#     ).rule(
-#         knext.OneOf(query_mode, [QueryBuilderMode.MANUALLY.name]),
-#         knext.Effect.SHOW,
-#     )
+        exec_context.set_warning(f"Model fitted successfully for params {params}, AIC: {aic_score}")
 
-#     query_prebuilt_name = knext.EnumParameter(
-#         label="Pre-built queries:",
-#         description="Select an available pre-built query to be used.",
-#         default_value=pb_queries.HardCodedQueries.CAMPAIGNS.name,
-#         enum=pb_queries.HardCodedQueries,
-#     ).rule(
-#         knext.OneOf(query_mode, [QueryBuilderMode.PREBUILT.name]),
-#         knext.Effect.SHOW,
-#     )
+        return (aic_score, model_fit)
+
+    def accept_new_params(self, delta_cost, beta):
+        # If the cost doesn't increase, we always accept
+        if delta_cost <= 0:
+            return True
+        # If the cost increases and beta is infinite (last iteration), we always reject
+        if beta == np.inf:
+            return False
+
+        p = np.exp(-beta * delta_cost)
+        return np.random.rand() < p
+
+    # The simulated annealing generic solver. NOTE: The default beta0 and beta1 are arbitrary.
+    def params_optimization_loop(self, series, seasonality, 
+            params_constraints, exec_context: knext.ExecutionContext, 
+            step_size=1, anneal_steps = 10, mcmc_steps = 100,
+            beta0 = 0.1, beta1 = 10.0, seed = None):
+        # Optionally set up the random number generator state
+        if seed is not None:
+            np.random.seed(seed)
+
+        # Set up the list of betas.
+        beta_list = np.zeros(anneal_steps)
+        # All but the last one are evenly spaced between beta0 and beta1 (included)
+        beta_list[:-1] = np.linspace(beta0, beta1, anneal_steps - 1)
+        # The last one is set to infinty
+        beta_list[-1] = np.inf
+        # Set up the progress bar
+        progress = np.linspace(0.2, 0.8, anneal_steps)
+
+        max_p, max_i, max_q, max_ps, max_is, max_qs = params_constraints
+
+        exec_context.set_warning("getting ready to find optimal integration parameters...")
+        d, D = self.find_optimal_integration_params(series, seasonality, max_i, max_is, alpha=0.05)
+        exec_context.set_warning(f"Optimal integration parameters found: d={d}, D={D}. Proposing initial parameters...")
+        current_params = self.propose_initial_params(d, D, max_p, max_q, max_ps, max_qs)
+
+        exec_context.set_warning(f"Initial parameters proposed: {current_params}. Evaluating initial model...")
+        current_cost = self.evaluate_arima_model(series, current_params, seasonality, exec_context = exec_context)[0]
+        exec_context.set_warning(f"Initial model evaluated with cost: {current_cost}. Starting optimization loop...")
+
+        # Keep the best cost seen so far, and its associated configuration.
+        best_params = deepcopy(current_params)
+        best_cost = current_cost
+
+        # Main loop of the annaling: Loop over the betas
+        for beta in beta_list:
+            # At each beta, we want to record the acceptance rate, so we need a counter for the number of accepted moves
+            accepted_moves = 0
+            # For each beta, perform a number of MCMC steps
+            for t in range(mcmc_steps):
+                proposed_params = self.propose_new_params(series, current_params, step_size)
+                delta_cost = self.evaluate_arima_model(series, proposed_params, seasonality, exec_context = exec_context)[0] - current_cost
+                exec_context.set_warning(
+                    f"MCMC step: {t+1}/{mcmc_steps} for beta: {beta} Proposed params: {proposed_params}, Delta cost: {delta_cost}"
+                )
+
+                # Metropolis rule
+                if self.accept_new_params(delta_cost, beta):
+                    current_params = deepcopy(proposed_params)
+                    current_cost += delta_cost
+                    accepted_moves += 1
+
+                    if current_cost <= best_cost:
+                        best_cost = current_cost
+                        best_params = deepcopy(current_params)
+            
+            # Dynamic progress update based on the current beta
+            exec_context.set_progress(progress[beta_list.tolist().index(beta)])
+
+            # Print in the console the current beta, the acceptance rate, and the best parameters found so far
+            exec_context.set_warning(
+                f'Iteration: {beta_list.tolist().index(beta)+1}, beta: {beta}, accept_freq: {accepted_moves/mcmc_steps}, best params: {best_params}, best cost: {best_cost}'
+                )
+
+        # Return the best instance
+        return best_params

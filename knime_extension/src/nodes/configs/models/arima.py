@@ -72,6 +72,8 @@ class SarimaPredictorParams:
         column_filter=kutil.is_numeric,
     )
 
+def ciao():
+    return
 
 
 # @knext.parameter_group(label="Settings")
