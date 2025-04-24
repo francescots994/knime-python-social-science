@@ -9,15 +9,4 @@ vendor: Bocconi University, Milan, Italy
 license_file: LICENSE.TXT # Best practice: put your LICENSE.TXT next to the knime.yml; otherwise you would need to change to path/to/LICENSE.txt
 bundled_env_name: org_knime_pythonscripting # we re-use the bundled Python environment
 feature_dependencies:
-  - org.knime.features.python3.scripting 5.3.0
-
-#env_yml_path: bundling_ymls/environment_main.yml # this file is needed to create the dedicated conda environment upon installation in KNIME
-
-#the packages sometimes have different versions for each OS, following keys, point to the respective environment.yml files containing specific version of packages, this may not be applicable for all extensions but not necessary!
-
-#env_yml_path: env.yml
-#  Optional: define any KNIME related feature dependency here.
-# feature_dependencies: 
-#   - org.knime.features.python3.scripting 5.3.0
-#   - org.knime.knip.feature
-#   - org.knime.features.core 5.1.1 #ensure that this extension can only be used with 5.1.1 which includes dialog rules
+  - org.knime.features.python3.scripting 5.4.3
