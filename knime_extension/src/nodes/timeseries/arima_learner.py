@@ -8,9 +8,12 @@ import pickle
 from copy import deepcopy
 from statsmodels.tsa.stattools import kpss
 import random
+import warnings
+from statsmodels.tools.sm_exceptions import ConvergenceWarning # Import specific warning type if known
+import time
+
 
 LOGGER = logging.getLogger(__name__)
-
 
 
 @knext.parameter_group("Non Seasonal Parameters")
@@ -72,7 +75,7 @@ class seasonal_params:
 )
 @knext.input_table(
     name="Input Data",
-    description="Table containing training data for fitting the SARIMA model, must contain a numeric target column with no missing values to be used for forecasting.",
+    description="Table containing training data for fitting the SARIMA model, must contain a numeric target column with no missing values.",
 )
 @knext.output_table(
     name="In-sample Predictions and Residuals",
@@ -80,24 +83,28 @@ class seasonal_params:
 )
 @knext.output_table(
     name="Coefficients and Statistics",
-    description="Table containing fitted model coefficients, variance of residuals (sigma2), and several model metrics along with their standard errors.",
+    description="Table containing optimal parameters, fitted model coefficients, variance of residuals, and several model metrics along with their standard errors.",
 )
 @knext.output_binary(
     name="Model",
-    description="Pickled model object that can be used by the SARIMA (Apply) node to generate different forecast lengths without refitting the model",
+    description="Pickled model object that can be used by the Auto SARIMA predictor node to generate different forecast lengths without refitting the model",
     id="auto_sarima.model",
 )
 class SarimaLearner:
     """
-    Trains and generates a forecast with a (S)ARIMA Model
-
-    Trains and generates a forecast using a Seasonal AutoRegressive Integrated Moving Average (SARIMA) model. The SARIMA models captures temporal structures in time series data in the following components:
+    Trains and generates a forecast using a (Seasonal) AutoRegressive Integrated Moving Average (S)ARIMA model. The SARIMA models captures temporal structures in time series data in the following components:
 
     - **AR (AutoRegressive):** Relationship between the current observation and a number (p) of lagged observations.
     - **I (Integrated):** Degree (d) of differencing required to make the time series stationary.
     - **MA (Moving Average):** Time series mean and the relationship between the current forecast error and a number (q) of lagged forecast errors.
 
     *Seasonal versions of these components operate similarly, with lag intervals equal to the seasonal period (S).*
+
+    The model is trained using the SARIMAX class from the statsmodels library. The node uses a simulated annealing algorithm to optimize the hyperparameters of the SARIMA model, namely the non-seasonal and seasonal parameters.
+
+    If the user sets the seasonal parameters to zero, including the seasonality parameter itself, the model will behave like a standard ARIMA model.
+    
+    The node also supports dynamic in-sample predictions, which can be used to generate lagged values for the model. Additionally, the node allows for log transformation of the target column before model fitting and exponentiation of the forecast before output, which can help reduce variance in the training data.
     """
 
     # General settings for the SARIMA model
@@ -109,9 +116,9 @@ class SarimaLearner:
     )
     seasonal_period_param = knext.IntParameter(
         label="Seasonal Period (s)",
-        description="Specify the length of the Seasonal Period",
+        description="Specify the length of the Seasonal Period. Set =0 for non-seasonal ARIMA model.",
         default_value=2,
-        min_value=2,
+        min_value=0,
     )
     dynamic_check = knext.BoolParameter(
         label="Generate in-samples dynamically",
@@ -169,6 +176,8 @@ class SarimaLearner:
             exec_context: knext.ExecutionContext,
             input: knext.Table
         ):
+        # Record start time
+        start_time = time.perf_counter()
         
         df: pd.DataFrame
         df = input.to_pandas()
@@ -196,18 +205,18 @@ class SarimaLearner:
                                 exec_context = exec_context,
                                 step_size=1, 
                                 anneal_steps=5, 
-                                mcmc_steps=2, 
+                                mcmc_steps=10, 
                                 beta0=0.1,
-                                beta1=10.0, 
+                                beta1=10.0,
                                 seed=None)
         exec_context.set_progress(0.8)
         
-        model = SARIMAX(
-            endog = target_col,
-            order = (best_params['p'], best_params['d'], best_params['q']),
-            seasonal_order = (best_params['P'], best_params['D'], best_params['Q'], self.seasonal_period_param)
-        )
-        trained_model = model.fit()
+        trained_model = self.evaluate_arima_model(
+            target_col, 
+            best_params, 
+            self.seasonal_period_param,
+            exec_context = exec_context
+        )[1]
         exec_context.set_progress(0.9)
 
         # produce in-sample predictions for the whole series and put it in a Pandas Series
@@ -230,7 +239,14 @@ class SarimaLearner:
 
         model_binary = pickle.dumps(trained_model)
 
-        exec_context.set_progress(0.9)
+        exec_context.set_progress(0.99)
+
+        # Record end time
+        end_time = time.perf_counter()
+        exec_context.set_warning(
+            f"Model training completed in {end_time - start_time:.2f} seconds."
+        )
+
         return (
             knext.Table.from_pandas(in_samps_and_residuals, row_ids = "keep"),
             knext.Table.from_pandas(coeffs_and_stats, row_ids = "keep"),
@@ -348,13 +364,11 @@ class SarimaLearner:
         return d, D
 
     def propose_initial_params(self, d, D, max_p=8, max_q=8, max_ps=5, max_qs=5):
-        """
-        Proposes initial SARIMA hyperparameters.
-        """
-        p = round(max_p / 2)
-        q = round(max_q / 2)
-        P = round(max_ps / 2)
-        Q = round(max_qs / 2)
+
+        p = min([max_p, 1])
+        q = min([max_q, 1])
+        P = min([max_ps, 1])
+        Q = min([max_qs, 1])
 
         return {'p': p, 'd': d, 'q': q, 'P': P, 'D': D, 'Q': Q}
 
@@ -372,19 +386,19 @@ class SarimaLearner:
 
             new_p, new_q = current_p + (np.random.choice([-1, 1]) * step_size), current_q + (np.random.choice([-1, 1]) * step_size)
 
-            new_p = min(max_p, new_p)
-            new_q = min(max_q, new_q)
+            new_p = max(min(max_p, new_p), 0)
+            new_q = max(min(max_q, new_q), 0)
 
             updated_params['p'], updated_params['q'] = new_p, new_q
 
-        elif threshold > (1/2): # update seasonal parameters (P, Q)
+        elif threshold > (1/2) and max_ps != 0 and max_qs != 0: # update seasonal parameters (P, Q) only if they are not zero (seasonal model)
 
             current_ps, current_qs = updated_params['P'], updated_params['Q']
 
             new_ps, new_qs = current_ps + (np.random.choice([-1, 1]) * step_size), current_qs + (np.random.choice([-1, 1]) * step_size)
 
-            new_ps = min(max_ps, new_ps)
-            new_qs = min(max_qs, new_qs)
+            new_ps = max(min(max_ps, new_ps), 0)
+            new_qs = max(min(max_qs, new_qs), 0)
 
             updated_params['P'], updated_params['Q'] = new_ps, new_qs
 
@@ -395,21 +409,47 @@ class SarimaLearner:
 
 
 
-    def evaluate_arima_model(self, series, params, seasonality):
+    def evaluate_arima_model(self, series, params, seasonality, exec_context: knext.ExecutionContext):
         """
-        Fits an ARIMA model and returns the AIC value as a score.
+        Fits an ARIMA model and returns the AIC value as a score,
+        also checks for specific warnings.
         """
-        try:
-            # AIC as scoring metric
-            model_fit = SARIMAX(
-                endog = series,
-                order = (params['p'], params['d'], params['q']), # p, d, q order parameters for arima
-                seasonal_order = (params['P'], params['D'], params['Q'], seasonality) # P, D, Q seasonal order parameters
-            ).fit()
+        aic_score = np.inf
+        convergence_warning_occurred = False
 
-            return model_fit.aic
-        except:
-            return np.inf
+        try:
+            # Use catch_warnings to capture any warnings during fit()
+            with warnings.catch_warnings(record=True) as caught_warnings:
+                warnings.simplefilter("always")  # Ensure all warnings are caught
+
+                model = SARIMAX(
+                    endog=series,
+                    order=(params['p'], params['d'], params['q']),
+                    seasonal_order=(params['P'], params['D'], params['Q'], seasonality)
+                )
+                model_fit = model.fit(disp=False)
+                aic_score = model_fit.aic
+
+                # Check if any ConvergenceWarning was caught
+                for warning in caught_warnings:
+                    if issubclass(warning.category, ConvergenceWarning):
+                        convergence_warning_occurred = True
+                        break 
+
+        except Exception as e:
+            # Handle potential errors during model fitting (e.g., invalid parameters)
+            exec_context.set_warning(f"WARNING Error fitting SARIMAX with params {params}: {e}")
+            return (np.inf, model_fit) # Treat errors as convergence issues or high cost
+
+        if convergence_warning_occurred:
+            exec_context.set_warning(f"ConvergenceWarning occurred for params {params}. Handling it...")
+            # return infinity to make impossible to accept these parameters
+            exec_context.set_warning(f"Model fitting failed for params {params}, returning infinity.")
+            return (np.inf, model_fit)
+
+        exec_context.set_warning(f"Model fitted successfully for params {params}, AIC: {aic_score}")
+
+        return (aic_score, model_fit)
 
     def accept_new_params(self, delta_cost, beta):
         # If the cost doesn't increase, we always accept
@@ -437,13 +477,19 @@ class SarimaLearner:
         beta_list[:-1] = np.linspace(beta0, beta1, anneal_steps - 1)
         # The last one is set to infinty
         beta_list[-1] = np.inf
+        # Set up the progress bar
+        progress = np.linspace(0.2, 0.8, anneal_steps)
 
         max_p, max_i, max_q, max_ps, max_is, max_qs = params_constraints
 
+        exec_context.set_warning("getting ready to find optimal integration parameters...")
         d, D = self.find_optimal_integration_params(series, seasonality, max_i, max_is, alpha=0.05)
+        exec_context.set_warning(f"Optimal integration parameters found: d={d}, D={D}. Proposing initial parameters...")
         current_params = self.propose_initial_params(d, D, max_p, max_q, max_ps, max_qs)
 
-        current_cost = self.evaluate_arima_model(series, current_params, seasonality)
+        exec_context.set_warning(f"Initial parameters proposed: {current_params}. Evaluating initial model...")
+        current_cost = self.evaluate_arima_model(series, current_params, seasonality, exec_context = exec_context)[0]
+        exec_context.set_warning(f"Initial model evaluated with cost: {current_cost}. Starting optimization loop...")
 
         # Keep the best cost seen so far, and its associated configuration.
         best_params = deepcopy(current_params)
@@ -456,8 +502,11 @@ class SarimaLearner:
             # For each beta, perform a number of MCMC steps
             for t in range(mcmc_steps):
                 proposed_params = self.propose_new_params(series, current_params, step_size)
-                delta_cost = self.evaluate_arima_model(series, proposed_params, seasonality) - current_cost
-                
+                delta_cost = self.evaluate_arima_model(series, proposed_params, seasonality, exec_context = exec_context)[0] - current_cost
+                exec_context.set_warning(
+                    f"MCMC step: {t+1}/{mcmc_steps} for beta: {beta} Proposed params: {proposed_params}, Delta cost: {delta_cost}"
+                )
+
                 # Metropolis rule
                 if self.accept_new_params(delta_cost, beta):
                     current_params = deepcopy(proposed_params)
@@ -468,8 +517,12 @@ class SarimaLearner:
                         best_cost = current_cost
                         best_params = deepcopy(current_params)
             
+            # Dynamic progress update based on the current beta
+            exec_context.set_progress(progress[beta_list.tolist().index(beta)])
+
+            # Print in the console the current beta, the acceptance rate, and the best parameters found so far
             exec_context.set_warning(
-                f'Iteration: {beta_list.tolist().index(beta)}, beta: {beta}, accept_freq: {accepted_moves/mcmc_steps}, best params: {best_params}, best cost: {best_cost}'
+                f'Iteration: {beta_list.tolist().index(beta)+1}, beta: {beta}, accept_freq: {accepted_moves/mcmc_steps}, best params: {best_params}, best cost: {best_cost}'
                 )
 
         # Return the best instance

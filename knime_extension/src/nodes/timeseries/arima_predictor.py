@@ -38,7 +38,7 @@ class SarimaForcaster:
 
 
     number_of_forecasts = knext.IntParameter(
-        label="Forecast",
+        label="Forecast Periods",
         description="Forecasts of the given time series *h* period ahead of the training data.",
         default_value=1,
         min_value=1,
