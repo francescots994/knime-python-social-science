@@ -296,7 +296,7 @@ class AutoSarimaLearner:
 
         # Record end time
         end_time = time.perf_counter()
-        exec_context.set_warning(
+        LOGGER.info(
             f"Model training completed in {end_time - start_time:.2f} seconds."
         )
 
@@ -623,7 +623,7 @@ class AutoSarimaLearner:
         ):
             return updated_params
         else:
-            exec_context.set_warning(
+            LOGGER.info(
                 f"Proposed parameters {updated_params} are invalid for the series. Retaining current parameters."
             )
             return current_params
@@ -698,19 +698,16 @@ class AutoSarimaLearner:
             )  # Treat errors as convergence issues or high cost
 
         if convergence_warning_occurred:
-            exec_context.set_warning(
-                f"ConvergenceWarning occurred for params {params}. Handling it..."
-            )
             # return infinity to make impossible to accept these parameters
-            exec_context.set_warning(
-                f"Model fitting failed for params {params}, returning infinity."
+            LOGGER.info(
+                f"ConvergenceWarning occurred for params {params}. Model fitting failed, returning infinity."
             )
             return (
                 np.inf,
                 model_fit,
             )  # Return the model_fit object even if convergence failed
 
-        exec_context.set_warning(
+        LOGGER.info(
             f"Model fitted successfully for params {params}, AIC: {aic_score}"
         )
 
@@ -775,7 +772,7 @@ class AutoSarimaLearner:
              - Decide whether to accept the proposed parameters using the Metropolis criterion (`accept_new_params`).
              - If accepted, update the current parameters and cost.
              - If the accepted parameters yield the best cost seen so far, update the best parameters and cost.
-           - Report progress and results for the current `beta` via `exec_context.set_warning`.
+           - Report progress and results for the current `beta`
         6. Return the best set of parameters found throughout the process.
 
         Parameters:
@@ -821,20 +818,22 @@ class AutoSarimaLearner:
                 "The number of progress steps must match the number of beta values."
             )
 
-        exec_context.set_warning("Preparing to find optimal integration parameters...")
+        LOGGER.info(
+            "Preparing to find optimal integration parameters..."
+        )
         # Create a copy to avoid modifying the original series outside this function scope
         series_copy_for_diff = series.copy()
         d, D = self.__find_optimal_integration_params(
             series_copy_for_diff
         )
-        exec_context.set_warning(
+        LOGGER.info(
             f"Optimal integration parameters found: d={d}, D={D}. Generating the remaining initial parameters..."
         )
         current_params = self.__propose_initial_params(
             d, D
         )
 
-        exec_context.set_warning(
+        LOGGER.info(
             f"Initial parameters: {current_params}. Evaluating initial model based on the AIC..."
         )
         current_cost = self.__evaluate_arima_model(
@@ -845,8 +844,8 @@ class AutoSarimaLearner:
 
         # Handle case where initial evaluation fails
         if current_cost == np.inf:
-            exec_context.set_warning(
-                f"Initial model evaluation failed (AIC=inf) for params {current_params}. Trying a simpler model (0,d,0)(0,D,0)..."
+            LOGGER.info(
+                f"Initial model evaluation failed (AIC=inf) for params {current_params}. Trying a simpler model (0,{d},0)(0,{D},0)..."
             )
             # Try a very simple model as fallback
             fallback_params = {"p": 0, "d": d, "q": 0, "P": 0, "D": D, "Q": 0}
@@ -869,7 +868,7 @@ class AutoSarimaLearner:
                         f"Even the simplest fallback model (0,{d},0)(0,{D},0) failed to fit. Cannot proceed with optimization."
                     )
                 else:
-                    exec_context.set_warning(
+                    LOGGER.info(
                         f"Using fallback initial parameters {current_params} with AIC: {current_cost}"
                     )
             else:
@@ -878,7 +877,7 @@ class AutoSarimaLearner:
                     f"Initial parameters {current_params} failed to fit and fallback parameters (0,{d},0)(0,{D},0) are invalid for the series length. Cannot proceed."
                 )
 
-        exec_context.set_warning(
+        LOGGER.info(
             f"Initial model evaluated with AIC: {current_cost}. Starting optimization loop..."
         )
 
@@ -908,11 +907,8 @@ class AutoSarimaLearner:
                     delta_cost = new_cost - current_cost
                     
                 else:
-                    exec_context.set_warning(
-                        "Proposed parameters are the same as the current ones. Skipping evaluation."
-                    )
                     continue
-                exec_context.set_warning(  # TODO change in logger.warning
+                LOGGER.info(
                     f"MCMC step: {t + 1}/{mcmc_steps} for beta: {beta} Proposed params: {proposed_params}, Delta cost: {delta_cost}"
                 )
 
@@ -930,12 +926,12 @@ class AutoSarimaLearner:
             exec_context.set_progress(progress[beta_list.tolist().index(beta)])
 
             # Print in the console the current beta, the acceptance rate, and the best parameters found so far
-            exec_context.set_warning(
+            LOGGER.info(
                 f"Iteration: {beta_list.tolist().index(beta) + 1}, beta: {beta}, accept_freq: {accepted_moves / mcmc_steps}, best params: {best_params}, best cost: {best_cost}"
             )
 
         # Return the best instance
-        exec_context.set_warning(
+        LOGGER.info(
             f"Optimization finished. Final best parameters: {best_params} with AIC: {best_cost:.2f}"
         )
         return best_params

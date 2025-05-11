@@ -1,6 +1,9 @@
 name: knime-python-social-science  # Will be concatenated with the group_id to an ID
 author: Francesco Tuscolano & Daniele Tonini & Pietro Maran
-extension_module: src/social_science_ext # The .py Python module containing the nodes of your extension
+env_yml_path: C:\Users\andre\OneDrive\Desktop\clone_timeseries\knime-python-social-science\config.yml
+extension_module: # The .py Python module containing the nodes of your extension
+  - C:\Users\andre\OneDrive\Desktop\clone_timeseries\knime-python-social-science\src\nodes\arima_learner.py
+  - C:\Users\andre\OneDrive\Desktop\clone_timeseries\knime-python-social-science\src\nodes\arima_predictor.py
 description: Social Science Nodes for KNIME # Human readable bundle name / description
 long_description: This repository is built for KNIME - Social Science Extension, with the goal of making Python-based nodes, allowing researchers and analysts to integrate advanced statistical methods.
 group_id: uni.bocconi

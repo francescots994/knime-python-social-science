@@ -21,7 +21,7 @@ LOGGER = logging.getLogger(__name__)
     id="auto_sarima.model",
 )
 @knext.output_table(
-    name="Forecast periods",
+    name="Forecasts",
     description="Table containing the generated forecast values. The forecast starts one period after the end of the data used to train the input model.",
 )
 class SarimaForcaster:
@@ -47,9 +47,8 @@ class SarimaForcaster:
 
     """
 
-
     number_of_forecasts = knext.IntParameter(
-        label="Forecast Periods",
+        label="Forecasts",
         description="Specifies the number of future time periods for which to generate forecasts. For example, if the training data ended at time T, a value of 12 here would forecast for T+1, T+2, ..., T+12.",
         default_value=1,
         min_value=1,
@@ -66,11 +65,6 @@ class SarimaForcaster:
             configure_context: knext.ConfigurationContext,
             input_model
         ):
-
-        if self.number_of_forecasts < 1:
-            configure_context.set_warning(
-                "At least one forecast should be made by the model."
-            )
 
         forecast_schema = knext.Column(knext.double(), "Forecasts")
 
