@@ -253,6 +253,12 @@ class AutoSarimaLearner:
 
         exec_context.set_progress(0.1)
 
+        # check if the number of obsevations is not lower than seasonality
+        if len(target_col) < self.seasonal_period_param:
+            raise knext.InvalidParametersError(
+                f"The number of observations in the target column ({len(target_col)}) is lower than the seasonal period ({self.seasonal_period_param})."
+            )
+
         # check for missing values
         self.__validate_col(target_col)
 

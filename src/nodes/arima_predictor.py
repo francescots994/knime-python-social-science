@@ -9,7 +9,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 @knext.node(
-    name="Auto SARIMA Predictor",
+    name="Auto-SARIMA Predictor",
     node_type=knext.NodeType.PREDICTOR,
     icon_path="icons/models/SARIMA_Forecaster-Apply.png",
     category=kutil.category_timeseries,
