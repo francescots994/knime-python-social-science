@@ -14,8 +14,8 @@ LOGGER = logging.getLogger(__name__)
 category = knext.category(
     path="/community",
     level_id="socialscience",
-    name="KNIME Social Science Extension",
-    description="Python Nodes for Statistical Analysis",
+    name="Social Science Extension",
+    description="Nodes for Statistical Analysis",
     icon="icons/Analytics.png",
 )
 
