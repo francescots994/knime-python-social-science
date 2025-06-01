@@ -8,7 +8,6 @@ import pickle
 from statsmodels.tsa.stattools import kpss
 import warnings
 from statsmodels.tools.sm_exceptions import ConvergenceWarning
-import time
 
 
 LOGGER = logging.getLogger(__name__)
@@ -96,7 +95,7 @@ class OptimizationLoopParams:
     beta1 = knext.DoubleParameter(
         label="Final Annealing Temperature (beta1)",
         description="Final (highest) finite inverse temperature before switching to infinity. Corresponds to low tolerance for accepting worse solutions. Set to 10.0 by default.",
-        default_value=5.0,
+        default_value=3.0,
         min_value=0.001,
         is_advanced=True,
     )
@@ -235,13 +234,10 @@ class AutoSarimaLearner:
 
     def execute(self, exec_context: knext.ExecutionContext, input: knext.Table):
 
-        # Record start time
-        start_time = time.perf_counter()
-
         df = input.to_pandas()
         target_col = df[self.input_column]
 
-        # check if log transformation is enabled
+        # if enabled, apply natural logarithm transformation. If negative values are present, raise an error
         if self.natural_log:
             num_negative_vals = kutil.count_negative_values(target_col)
 
@@ -299,12 +295,6 @@ class AutoSarimaLearner:
         model_binary = pickle.dumps(trained_model)
 
         exec_context.set_progress(0.99)
-
-        # Record end time
-        end_time = time.perf_counter()
-        LOGGER.info(
-            f"Model training completed in {end_time - start_time:.2f} seconds."
-        )
 
         return (
             knext.Table.from_pandas(in_samps_and_residuals, row_ids="keep"),
@@ -891,6 +881,9 @@ class AutoSarimaLearner:
         best_params = current_params.copy()
         best_cost = current_cost
 
+        # create a set of parameters already proposed by the algorithm
+        proposed_params_cache = set()
+
         # Main loop of the simulated annealing process: Loop over the betas (the list of tolerances for moves that increase the cost)
         for beta in beta_list:
             # At each beta record the acceptance rate using a counter for the number of accepted moves
@@ -903,6 +896,14 @@ class AutoSarimaLearner:
                     current_params,
                     exec_context,
                 )
+                # If the proposed parameters are already in the cache, skip this iteration. Else, add them to the cache.
+                if tuple(proposed_params.items()) in proposed_params_cache:
+                    LOGGER.info(
+                        f"Proposed parameters {proposed_params} already evaluated. Moving to next parameters proposal."
+                    )
+                    continue
+                else:
+                    proposed_params_cache.add(tuple(proposed_params.items()))
                 # Only evaluate if parameters actually changed
                 if proposed_params != current_params:
                     new_cost = self.__evaluate_arima_model(
@@ -937,7 +938,7 @@ class AutoSarimaLearner:
             )
 
         # Return the best instance
-        LOGGER.info(
+        LOGGER.debug(
             f"Optimization finished. Final best parameters: {best_params} with AIC: {best_cost:.2f}"
         )
         return best_params
