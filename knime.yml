@@ -1,6 +1,6 @@
 name: social-science  # Will be concatenated with the group_id to an ID
 author: Francesco Tuscolano & Pietro Maran & Daniele Tonini
-extension_module: src\social_science_ext # The .py Python module containing the nodes of your extension
+extension_module: src/social_science_ext # The .py Python module containing the nodes of your extension
 description: Social Science Nodes # Human readable bundle name / description
 long_description: Allow researchers and analysts to integrate advanced statistical methods
 group_id: uni.bocconi
