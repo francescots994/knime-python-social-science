@@ -48,7 +48,7 @@ class SeasonalParams:
     max_s_ar = knext.IntParameter(
         label="Max Seasonal AR Order (P)",
         description="The maximum order of seasonally lagged observations to enforce in the optimization.",
-        default_value=5,
+        default_value=3,
         min_value=0,
     )
     max_s_i = knext.IntParameter(
@@ -60,7 +60,7 @@ class SeasonalParams:
     max_s_ma = knext.IntParameter(
         label="Max Seasonal MA Order (Q)",
         description="The maximum order of seasonal lagged forecast errors to enforce in the optimization.",
-        default_value=5,
+        default_value=3,
         min_value=0,
     )
 
@@ -104,6 +104,7 @@ class OptimizationLoopParams:
         description="A step size of 1 (default) will propose new parameters higher or lower by 1. Be aware that a higher step size will be effective with looser parameter constraints.",
         default_value=1,
         min_value=1,
+        max_value=3,
         is_advanced=True,
     )
 
@@ -448,9 +449,9 @@ class AutoSarimaLearner:
             The input time series data. This series will be modified in place.
         - seasonality: int
             The seasonal period of the time series. Used for seasonal differencing.
-        - max_i: int, optional (default=5)
+        - max_i: int, optional (default=2)
             The maximum order of non-seasonal differencing (d) to test.
-        - max_i_s: int, optional (default=5)
+        - max_i_s: int, optional (default=2)
             The maximum order of seasonal differencing (D) to test.
         - alpha: float, optional (default=0.05)
             The significance level for the KPSS test. If the p-value is greater than or equal to alpha, the series is considered stationary.
@@ -502,9 +503,9 @@ class AutoSarimaLearner:
             The non-seasonal differencing order.
         - D: int
             The seasonal differencing order.
-        - max_p: int, optional (default=5)
+        - max_p: int, optional (default=3)
             The maximum allowed non-seasonal AR order.
-        - max_q: int, optional (default=5)
+        - max_q: int, optional (default=3)
             The maximum allowed non-seasonal MA order.
         - max_p_s: int, optional (default=5)
             The maximum allowed seasonal AR order.
@@ -552,9 +553,9 @@ class AutoSarimaLearner:
             The maximum allowed non-seasonal AR order.
         - max_q: int, optional (default=5)
             The maximum allowed non-seasonal MA order.
-        - max_p_s: int, optional (default=5)
+        - max_p_s: int, optional (default=3)
             The maximum allowed seasonal AR order.
-        - max_q_s: int, optional (default=5)
+        - max_q_s: int, optional (default=3)
             The maximum allowed seasonal MA order.
 
         Returns:
@@ -575,14 +576,16 @@ class AutoSarimaLearner:
         max_p_s = self.seasonal_params.max_s_ar
         max_q_s = self.seasonal_params.max_s_ma
 
+        steps = np.arange(1, step_size + 1)
+
         if threshold <= (1 / 2) or (
             max_p_s == 0 and max_q_s == 0
         ):  # update trend parameters (p, q)
             current_p, current_q = updated_params["p"], updated_params["q"]
 
             new_p, new_q = (
-                current_p + (np.random.choice([-1, 0, 1]) * step_size),
-                current_q + (np.random.choice([-1, 0, 1]) * step_size),
+                current_p + (np.random.choice([-1, 0, 1]) * np.random.choice(steps, size=1)[0]),
+                current_q + (np.random.choice([-1, 0, 1]) * np.random.choice(steps, size=1)[0]),
             )
 
             new_p = max([min([max_p, new_p]), 0])
@@ -596,8 +599,8 @@ class AutoSarimaLearner:
             current_ps, current_qs = updated_params["P"], updated_params["Q"]
 
             new_ps, new_qs = (
-                current_ps + (np.random.choice([-1, 0, 1]) * step_size),
-                current_qs + (np.random.choice([-1, 0, 1]) * step_size),
+                current_ps + (np.random.choice([-1, 0, 1]) * np.random.choice(steps, size=1)[0]),
+                current_qs + (np.random.choice([-1, 0, 1]) * np.random.choice(steps, size=1)[0]),
             )
 
             new_ps = max(min(max_p_s, new_ps), 0)
